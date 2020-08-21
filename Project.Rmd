@@ -1,0 +1,90 @@
+---
+title: 'Machine Learning: Exercise Class Classification'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+In the report below, I fit a series of models to an exercise data set using three Machine Learning algorithms. The models' purpose is to classify the manner in which the exercise was done (A, B, C, D, or E) for each observation. Using cross-validation, I estimate the out-of-sample error rate of each algorithm.  Finally, I select the algorithm with the lowest estimated out-of-sample error rate, and select, as the final model, that model generated using the selected algorithm and fit using the complete training data set.
+
+## Load Libraries
+The "caret" library must be loaded in order to utilize the machine learning algorithms required below.
+
+```{r load-libs, include=FALSE}
+library(caret)
+library(pROC)
+```
+
+## Data Import
+Data is imported from the file "pml-training.csv", which were downloaded from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv.
+```{r import-data}
+training = read.csv("pml-training.csv",na.strings=c(""," ","NA","#DIV/0!"))
+```
+
+## Data Cleaning and Setup
+First, the training data set was cleaned up.  Features (columns) that should not contribute to the model (such as user name and time stamp) were removed, and features that have a value of "na" for most observations were also removed.
+
+```{r clean-data-1}
+training <- training[,8:160]
+toomanyna <- lapply(training,function(x) sum(is.na(x))) > 15000
+training <- training[,-which(toomanyna)]
+```
+
+No "na" values remained in the cleaned data set, so no further cleaning or imputing was carried out.
+```{r clean-data-2}
+any(is.na(training))
+```
+
+The random number generator seed was set.
+```{r set-seed}
+set.seed(8182020)
+```
+
+## Model Fitting
+
+### Linear Discriminant Analysis
+Models using the linear discriminant analysis (LDA) algorithm were fit to the training set using 10-fold cross-validation and preprocessing by centering and scaling.
+```{r fit-LDA, cache=TRUE}
+tc <- trainControl(method="cv",number=4,verboseIter=FALSE,returnResamp="all",savePredictions="all",preProcOptions=c("center","scale"))
+mfLDA <- train(classe~.,data=training,trControl=tc,preProcess=c("center","scale"),method="lda")
+mfLDA
+```
+
+### Classification and Regressions Trees
+Models using the classification and regression trees (CART, aka RPART) algorithm were fit to the training set, also using 10-fold cross-validation and preprocessing by centering and scaling.
+```{r fit-RPART, cache=TRUE}
+mfRPART <- train(classe~.,data=training,trControl=tc,preProcess=c("center","scale"),method="rpart")
+mfRPART
+```
+
+### Random Forest
+Random forest (RF) models were also fit to the training set. The RF models were much slower to train than the LDA and RPART models, and given the size of the training set (19622 observations), 10-fold cross-validation was too time-consuming to use in this case.  Instead, "leave one group out cross-validation" (LGOCV) was used. This method is also known as "Monte Carlo cross-validation. The training control parameters were set such that 10 random samples (number=10), each containing 20% of the training set observations (p=0.2) were taken as "folds" for subsequent RF model training. On average, each observation is thus included in the training set for two of the RF models. Once again, the data sets were centered and scaled.
+
+```{r fit-RF, cache=TRUE}
+tc <- trainControl(method="LGOCV",number=10,p=0.2,verboseIter=FALSE,returnResamp="all",savePredictions="all",preProcOptions=c("center","scale"))
+mfRF <- train(classe~.,data=training[,1:53],trControl=tc,preProcess=c("center","scale"),method="rf")
+mfRF
+```
+
+The ROC plots below confirm very good classification accuracy from the ROC model.
+```{r plot-ROC, cache=TRUE, message=FALSE}
+RFROC <- roc(training$classe,as.numeric(predict(mfRF,training)),levels=c("A","B"))
+plot(RFROC,type="S",main="B versus A ROC Plot for the RF Model")
+RFROC <- roc(training$classe,as.numeric(predict(mfRF,training)),levels=c("A","C"))
+plot(RFROC,type="S",main="C versus A ROC Plot for the RF Model")
+RFROC <- roc(training$classe,as.numeric(predict(mfRF,training)),levels=c("A","D"))
+plot(RFROC,type="S",main="D versus A ROC Plot for the RF Model")
+RFROC <- roc(training$classe,as.numeric(predict(mfRF,training)),levels=c("A","E"))
+plot(RFROC,type="S",main="E versus A ROC Plot for the RF Model")
+```
+
+## Model Selection
+The mean out-of-sample accuracy (that is, the accuracy of a model trained on 90% of the training data set in predicting the "classe" feature of remaining 10% of the training data) was `r mfLDA$result["Accuracy"]` for the LDA model and `r max(mfRPART$result["Accuracy"])` for the RPART model (highest value achieved by the RPART model for three values of the tuning parameter "cp" that were tried).
+
+The (maximum) mean out-of-sample accuracy of the RF model during cross-validation was `r max(mfRF$results["Accuracy"])`, which was much better than that of the LDA or RPART model.  Hence, I chose to use the RF model as the final model, and **the expected out-of-sample error is `r max(mfRF$result["Accuracy"])`**.
+
+
+
